@@ -1,63 +1,71 @@
 # herdr-shell
 
-[herdr](https://herdr.dev/) の外部 GUI(Windows ネイティブ supervision surface)。
-agent-grid の Windows Shell(tray / toast / deep link / jump-back)のアーキテクチャを
-herdr socket API に向けて再構成したもの。ターミナルは描画しない —
-herdr が server-side mux としてナビゲーションを担い、この shell は
-監視・通知・「該当セッションへ跳ぶ」だけを提供する。
+An external GUI for [herdr](https://herdr.dev/) — a Windows-native supervision
+surface. It reuses the architecture of agent-grid's Windows Shell
+(tray / toast / deep links / jump-back), pointed at the herdr socket API.
+It does not render a terminal: herdr, as a server-side multiplexer, owns
+navigation, and this shell only provides monitoring, notifications, and
+"jump to the session that needs me".
 
-## 動くもの (現状)
+## What works today
 
-- **HerdrShell.Core** — UI 非依存の中核 (Linux/WSL/Windows でビルド・テスト可)
-  - `Protocol/` — herdr socket API (protocol 20) のワイヤ型。正本は
-    `schema/herdr-api-schema-v20.json` (`herdr api schema --json` のスナップショット)
-    で、`SchemaContractTests` が同期を強制する
-  - `Client/` — `HerdrRequestClient` (1 接続 1 リクエスト) と
-    `HerdrEventStream` (events.subscribe ストリーム)
-  - `Supervision/` — herdr agent_status → SessionPhase の写像、純粋 reducer、
-    再接続バックオフ付き `HerdrSupervisionSession`
-  - `JumpBack/` — 2 層 jump (herdr 内 `agent.focus` + ターミナル前面化) の
-    オーケストレーション。Windows Terminal は `client.window_title.set` で
-    nonce をタブタイトルに刻印 → UIA で TabItem 特定 → SetForegroundWindow →
-    刻印を必ず clear。WezTerm は `wezterm cli activate-pane`。
-    Win32/UIA/wezterm は seam (interface) の背後で、実装は Windows 側の宿題
-- **HerdrShell.Probe** — 実 socket 検証 CLI
+- **HerdrShell.Core** — UI-independent core (builds and tests on Linux/WSL/Windows)
+  - `Protocol/` — wire types for the herdr socket API (protocol 20). The
+    source of truth is `schema/herdr-api-schema-v20.json` (a snapshot of
+    `herdr api schema --json`), kept in sync by `SchemaContractTests`
+  - `Client/` — `HerdrRequestClient` (one request per connection) and
+    `HerdrEventStream` (the events.subscribe stream)
+  - `Supervision/` — herdr agent_status → SessionPhase mapping, a pure
+    reducer, and `HerdrSupervisionSession` with reconnect backoff
+  - `JumpBack/` — orchestration of the two-layer jump (`agent.focus` inside
+    herdr + raising the hosting terminal). For Windows Terminal it stamps a
+    nonce onto the tab title via `client.window_title.set`, locates the
+    TabItem through UIA, calls SetForegroundWindow, and always clears the
+    stamp. For WezTerm it uses `wezterm cli activate-pane`. Win32/UIA/wezterm
+    live behind seams (interfaces); the real implementations are Windows-side
+    work
+- **HerdrShell.Probe** — real-socket verification CLI
   (`ping | agents | watch [sec] | focus <target> | title-probe [sec] | title-clear`)
-- **HerdrShell.Core.Tests** — 48 tests。fake は実測済みの接続モデル
-  (one-shot + subscribe ストリーム) を忠実に再現する
+- **HerdrShell.Core.Tests** — 48 tests. The fake reproduces the verified
+  connection model (one-shot requests + subscribe stream) faithfully
 
-## 実測で確定した herdr 0.8.2 の挙動
+## Behavior of herdr 0.8.2 confirmed by measurement
 
-- socket API は **1 接続 1 リクエスト**。応答直後にサーバーが切断する。
-  唯一の例外が `events.subscribe` で、接続はイベントストリームになる
-  (以降のリクエストは受け付けない)
-- `client.window_title.set` は **外部プロセスからでも成功する**
-  (`changed=true reason=set`)。attach 中の foreground クライアントが OSC で
-  ホストターミナルのタブタイトルを書き換える。WT jump 路線の前提は成立
-- `pane.agent_status_changed` 購読は per-pane (`pane_id` 必須)。fleet 全体の
-  supervision は lifecycle 購読 (`pane.updated` が agent_status 込みの
-  PaneInfo を運ぶ) で構成する
+- The socket API serves **one request per connection**: the server closes
+  the connection right after responding. The only exception is
+  `events.subscribe`, which turns the connection into an event stream
+  (no further requests are accepted on it)
+- `client.window_title.set` **succeeds even from an external process**
+  (`changed=true reason=set`). The foreground attached client rewrites the
+  hosting terminal's tab title via OSC, so the Windows Terminal jump route
+  is viable
+- The `pane.agent_status_changed` subscription is per-pane (`pane_id`
+  required). Fleet-wide supervision is built on the lifecycle subscriptions
+  instead (`pane.updated` carries the full PaneInfo including agent_status)
 
-## ビルド / テスト
+## Build / test
 
-.NET 8 SDK (このマシンでは `mise exec dotnet@8 -- dotnet ...`):
+.NET 8 SDK (on this machine: `mise exec dotnet@8 -- dotnet ...`):
 
 ```sh
 dotnet build HerdrShell.sln
 dotnet test HerdrShell.sln
-dotnet run --project src/HerdrShell.Probe -- ping        # 実 socket 検証
-dotnet run --project src/HerdrShell.Probe -- watch 12    # ライブ supervision
+dotnet run --project src/HerdrShell.Probe -- ping        # verify against the real socket
+dotnet run --project src/HerdrShell.Probe -- watch 12    # live supervision
 ```
 
-## 未実装 / 既知課題
+## Not implemented / known issues
 
-- **Windows ホスト** (WinUI tray/toast/panel + 実 UIA `ITerminalTabActivator` +
-  実 `ITerminalWindowActivator` + named pipe endpoint)。Core の seam は用意済み。
-  Windows での herdr named pipe 名は未確認 — 実機で要検証
-- **検出フラッピング**: herdr の screen-detection が再描画中に一時的に
-  `unknown` を返し、セッションが消えて戻る (実測)。tray/toast 側に
-  debounce (猶予時間) を入れてから通知に使うこと
-- **WSL 越しの接続**: herdr が WSL 内で動く場合、Windows 側 shell からは
-  `wsl.exe` 経由の実行か中継が必要 (AF_UNIX の WSL2 相互運用はない)
-- 承認 (approve/deny) の構造化往復は herdr に存在しない。`blocked` 状態の
-  表示 + jump が v1 のスコープ
+- **Windows host** (WinUI tray/toast/panel, the real UIA
+  `ITerminalTabActivator`, the real `ITerminalWindowActivator`, and the
+  named pipe endpoint). The Core seams are in place. The herdr named pipe
+  name on Windows is unverified — check against a native Windows herdr
+- **Detection flapping**: herdr's screen detection transiently reports
+  `unknown` during heavy redraws, making a session disappear and reappear
+  (observed live). Add a debounce (grace period) before wiring this into
+  tray/toast notifications
+- **Connecting across WSL**: when herdr runs inside WSL, a Windows-side
+  shell needs either `wsl.exe`-mediated execution or a relay (there is no
+  AF_UNIX interop with WSL2)
+- herdr has no structured approve/deny round trip. Showing the `blocked`
+  state plus jump-back is the v1 scope
