@@ -27,3 +27,14 @@ dotnet run --project src/HerdrShell.Probe -- ping           # T3: verify against
   Shell)
 - New features and bug fixes ship with tests. Work is not complete without
   them
+
+# Documentation (dev-docs)
+
+Structured docs live under `docs/` (Markdown + YAML frontmatter, managed by the
+dev-docs CLI). `docs/design/design-herdr-shell-core.md` is the governing design
+(responsibilities, invariants, seams); `docs/adr/` holds the decisions that bind
+future changes; `docs/note/` holds measurements and research logs. Update
+frontmatter, lifecycle, and relations through the CLI, not by hand, and run
+`docs lint` after writing. A change that alters a responsibility, boundary, or
+invariant must update the design through a change package's promotion, not by
+editing the design directly.

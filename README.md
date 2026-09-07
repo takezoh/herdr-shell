@@ -43,6 +43,16 @@ navigation, and this shell only provides monitoring, notifications, and
   required). Fleet-wide supervision is built on the lifecycle subscriptions
   instead (`pane.updated` carries the full PaneInfo including agent_status)
 
+## Documentation
+
+Governing design, decisions, and measurements live under `docs/` as
+dev-docs artifacts: [design-herdr-shell-core](docs/design/design-herdr-shell-core.md)
+(responsibilities, invariants, seams), the ADRs in [docs/adr/](docs/adr/)
+([one connection per request](docs/adr/adr-20260908-one-shot-connection.md),
+[title-stamp jump](docs/adr/adr-20260908-title-stamp-jump.md),
+[lifecycle subscriptions](docs/adr/adr-20260908-lifecycle-subscriptions.md)),
+and the [herdr 0.8.2 measurement log](docs/note/note-20260908-herdr-082-measurements.md).
+
 ## Build / test
 
 .NET 8 SDK (on this machine: `mise exec dotnet@8 -- dotnet ...`):
